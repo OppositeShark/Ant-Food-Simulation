@@ -13,50 +13,53 @@ import math
 import copy
 import sys
 import os
+import threading
 
 #%%Setup
 
 #Window Size
-width=700
+width=300
 height=width
 
 #Seed
 seed=None
 
 #Cell Size
-numsquares=10
-squareSize=width/numsquares
-wallWidth=5
+numRectX=5
+numRectY=numRectX
+wallWidth=2
 
-#Food Clusters
-NumFoodClusters=round(numsquares**2/4)
-FoodInCluster=round(squareSize*4)
+#Number of Food Clusters
+NumFoodClusters=math.ceil(numRectX*numRectY/4)
 
 #Ants
 #Angles and Sight
 randomWalk=math.radians(5)
-seeAngs={math.radians(i*s):5/i for i in (60,40,30,10) for s in (-1,1)}
+angs=(90,67,45,22)
+seeAngs={math.radians(i*s):5/i for i in angs for s in (-1,1)}
 seeAngs[0]=2
 seeDist=10
-maxturn=math.radians(30)
+maxturn=math.radians(45)
 #Speed
 maxSpeed=1
 acceleration=0.1
 #Weights and Colors
-foodweight=40
-wallweight=-200
-returnFood=200
-BlueWeight=lambda a:a/2
-BlueAvoidWeight=lambda a:-a/50
-RedWeight=lambda a:a/5
-AvoidFoodWeight=-60
-distWeight=lambda d:0.8**d
+foodweight=8000
+wallweight=-3000
+returnFood=8000
+BlueWeight=lambda a:a**1.4
+BlueAvoidWeight=lambda a:-a/1.5
+RedWeight=lambda a:a**1.4
+AvoidFoodWeight=wallweight
+distWeight=lambda d:0.9**d
 #Number of Ants
 numants=100
 #FPS
 fps=10
+#Threading
+numThreads=4
 #Lasting Pheromones
-LastLength=500
+LastLength=300
 fadeRate=math.ceil(LastLength/50)
 #%%Starting
 global BP
@@ -103,6 +106,9 @@ PURPLE=(100,0,255)
 BLACK=(0,0,0)
 CLEAR=(0,0,0,0)
 #Specific Colors
+ANTCOLOR=BLACK+(255,)
+TONEST=BLUE
+AWAYNEST=RED
 WALL=BLACK+(255,)
 FOOD=GREEN+(255,)
 NEST=YELLOW+(150,)
@@ -127,6 +133,7 @@ class ant():
         self.food=False
         self.speed=0
         self.lastFood=(0,0)
+        self.placePheromone=True
         ants.append(self)
     
     def dropPheromone(self):
@@ -149,7 +156,11 @@ class ant():
             choice[i]=1
         
         #Sight
+        #If the ant with food gets lost, it will stop dropping red pheromones
+        seeBlue=False
         
+        #Seeing each angle
+        hasFood=self.food
         for ang,weight in seeAngs.items():
             direction=self.ang+ang
             cosDirection=math.cos(direction)
@@ -176,31 +187,34 @@ class ant():
                     choice[ang]+=iWeight*wallweight
                     break
                 #Looking and picking up food
-                elif not self.food and PixVal==FOOD:
+                elif not hasFood and PixVal==FOOD:
                     choice[ang]+=iWeight*foodweight
                     if self.speed>i:
                         self.pickFood(x,y)
                         self.ang+=math.pi
                 #Attraction to nest
-                elif self.food and PixVal==NEST:
+                elif hasFood and PixVal==NEST:
                     choice[ang]+=returnFood
                 #If they have food
                 PixVal=BPheromones[x,y]
-                if self.food:
+                if hasFood:
                     #Blue Pheromones
-                    if PixVal[:3]==BLUE:
+                    if PixVal[3]>0:
+                        seeBlue=True
+                        #Sees path back
                         choice[ang]+=iWeight*BlueWeight(PixVal[3])
+                    #Avoid Food
                     PixVal=FoodMaze[x,y]
                     if PixVal==FOOD:
                         choice[ang]+=iWeight*AvoidFoodWeight
                 #If they don't have food
                 else:
                     #Blue Pheromones
-                    if PixVal[:3]==BLUE:
+                    if PixVal[3]>0:
                         choice[ang]+=iWeight*BlueAvoidWeight(PixVal[3])
                     #Red Pheromones
                     PixVal=RPheromones[x,y]
-                    if PixVal[:3]==RED:
+                    if PixVal[3]>0:
                         choice[ang]+=iWeight*RedWeight(PixVal[3])    
             #Angle Weight
             if choice[ang]>=0:
@@ -208,13 +222,20 @@ class ant():
             else:
                 choice[ang]/=weight
         
-        
-        rangeVals=(max(choice.values())-min(choice.values()))/100
+        #Turn off pheromones
+        if hasFood:
+            if seeBlue:
+                self.placePheromone=True
+            else:
+                self.placePheromone=False
+                
+        #Scale choices 
+        rangeVals=(max(choice.values())-min(choice.values()))/100    
         for i in choice.keys():
             choice[i]/=rangeVals
-            choice[i]=1.5**choice[i]
+            choice[i]=1.4**choice[i]
                 
-        #Random choice with weights
+        #Weights of each choice
         totalWeight=sum(choice.values())
         if totalWeight==0:
             return seeAngs
@@ -231,12 +252,15 @@ class ant():
         
         #Collision Detection
         if 0<self.x<width and 0<self.y<height:
-            #Put Food
+            #Put Food in nest
             if FoodMaze[self.x,self.y]==NEST:
                 if self.food:
                     self.food=False
                     self.ang+=math.pi
+                    self.placePheromone=True
+                    
                 goStraight=True
+            #"Kill" if they hit a wall
             elif FoodMaze[self.x,self.y]==WALL:
                 self.restart()
         
@@ -271,7 +295,8 @@ class ant():
             return
         updatePixel(self.x,self.y)
         self.move()
-        self.dropPheromone()
+        if self.placePheromone:
+            self.dropPheromone()
         updatePixel(self.x,self.y)
         
     def restart(self):
@@ -281,7 +306,7 @@ class ant():
         self.ang=random.uniform(0,2*math.pi)
     
     def draw(self, screen):
-        screen.fill((0,0,0,255),rect=[self.x,self.y,1,1])
+        screen.fill(ANTCOLOR,rect=[self.x,self.y,1,1])
         updatePixel(self.lastFood[0],self.lastFood[1])
         if self.food==True:
             cosx=math.cos(self.ang)
@@ -294,30 +319,19 @@ class ant():
                 y=self.y+math.floor(siny)
             else:
                 y=self.y+math.ceil(siny)
-            screen.fill((0,255,0,255),rect=[x,y,1,1])
+            screen.fill(FOOD,rect=[x,y,1,1])
             self.lastFood=(x,y)
             updatePixel(x,y)
             
 #%%Creating Ants
 def makeAnts():
+    global ants
     ants=[]
     for i in range(numants):
         ant(nestx,nesty,random.uniform(0,2*math.pi))
         
 #%%Map Making
-
-#Seed
-random.seed(seed)
 numTiles=lambda length,tile:math.ceil(length/tile)-1
-
-#Food
-def food(img,x,y,dev,num):
-    #Random Clusters
-    for i in range(num):
-        gx=random.gauss(0,dev)+x
-        gy=random.gauss(0,dev)+y
-        if 0<gx<width and 0<gy<height:
-            img[gx,gy]=FOOD
     
 #Maze Making
 path="\\".join(os.path.abspath("AntFood.py").split("\\")[:-2])
@@ -325,43 +339,80 @@ if path not in sys.path:
     sys.path.insert(0,path)
 from MazeDrawer import RecursionMaze
 
-def drawFood():
+def RandomPoint(SquareSize,length):
+    '''
+    Returns
+    -------
+    Integer
+        Random value between 0 and length, spaced SquareSize apart.
+
+    '''
+    return random.randint(0,numTiles(length,SquareSize))*SquareSize+(SquareSize//2)
+
+#Food
+def food(img,x,y,dev,num):
+    #Draws Random Clusters
+    for i in range(num):
+        gx=random.gauss(0,dev)+x
+        gy=random.gauss(0,dev)+y
+        if 0<gx<width and 0<gy<height:
+            img[gx,gy]=FOOD
+            
+#Draw Food
+def drawFood(RectX,RectY,SquareSize):   
     #Food Distribution
+    #Food Clusters
+    numSquares=numRectX*numRectY
+    FoodInCluster=math.ceil(SquareSize*4)
+    #Drawing Food
     for i in range(NumFoodClusters):
-        x=random.randint(0,numTiles(width,squareSize))*squareSize+(squareSize//2)
-        y=random.randint(0,numTiles(height,squareSize))*squareSize+(squareSize//2)
-        food(FoodMaze,x,y,squareSize/6,FoodInCluster)
-    
+        x=RandomPoint(RectX,width)
+        y=RandomPoint(RectY,height)
+        food(FoodMaze,x,y,SquareSize/6,FoodInCluster)
+
+#Draw Walls using MazeDrawer
 def drawWalls():
     #Walls
-    RecursionMaze(Mazedraw,(squareSize,squareSize),wallWidth,(0,0,width,height))
+    RectX=width/numRectX
+    RectY=height/numRectY
+    RecursionMaze(Mazedraw,(RectX,RectY),wallWidth,(0,0,width,height))
     #4 Walls
     Mazedraw.rectangle([0,0,width,wallWidth/2],fill=(0,0,0,255))
     Mazedraw.rectangle([0,0,wallWidth/2,height],fill=(0,0,0,255))
     Mazedraw.rectangle([width-(wallWidth/2),0,width,height],fill=(0,0,0,255))
     Mazedraw.rectangle([0,height-(wallWidth/2),width,height],fill=(0,0,0,255))
 
+#Creating the nest (yellow)
 nestx=0
 nesty=0
-def setNest():
+def setNest(RectX,RectY):
     global nestx
-    nestx=random.randint(0,numTiles(width,squareSize))*squareSize+(squareSize//2)
+    nestx=RandomPoint(RectX,width)
     global nesty
-    nesty=random.randint(0,numTiles(height,squareSize))*squareSize+(squareSize//2)
-
-def drawNest():
-    nestradius=(squareSize-2*wallWidth)/3
+    nesty=RandomPoint(RectY,height)
+    
+def drawNest(SquareSize):
+    nestradius=(SquareSize-2*wallWidth)/5
+    if nestradius<4:
+        nestradius=4
     Mazedraw.ellipse((nestx-nestradius,nesty-nestradius,nestx+nestradius,nesty+nestradius),fill=YELLOW+(150,))
 
 def drawMaze():
+    random.seed(seed)
+    #Length of Rectangle dimensions
+    RectX=width/numRectX
+    RectY=height/numRectY
+    #Smaller of 2 numbers, squares
+    SquareSize=min(RectX,RectY)
+    #Drawing
     ResetImgs()
-    drawFood()
+    drawFood(RectX,RectY,SquareSize)
     drawWalls()
-    setNest()
-    drawNest()
+    setNest(RectX,RectY)
+    drawNest(SquareSize)
     
 #%%Main Function
-#%% Fading Pheromones
+#Fading Pheromones
 def fade(PixelAccess):
     for x in range(width):
         for y in range(height):
@@ -369,6 +420,7 @@ def fade(PixelAccess):
             if color[3]==0:
                 continue
             PixelAccess[x,y]=color[:3]+(color[3]-1,)
+            updatePixel(x,y)
             
 def saveImgs():
     BPImg.save("BluePheromones.png","PNG")
@@ -405,6 +457,29 @@ def runSimulation():
         screen.blit(i, (0,0))
     pygame.display.update()
     
+    def runAnts(ants):
+        for i in ants:
+            i.run()
+    
+    def drawAnts(ants):
+        for i in ants:
+            i.draw(screen)
+    
+    def threadAnts(func):
+        threads=[]
+        divisions=int(numants/numThreads)
+        for i in range(numThreads):
+            if i==numThreads-1:
+                thread1=threading.Thread(target=func,args=(ants[i*divisions:],))
+            else:
+                thread1=threading.Thread(target=func,args=(ants[i*divisions:(i+1)*divisions],))
+            threads.append(thread1)
+            
+        for i in threads:
+            i.start()
+        for i in threads:
+            i.join()
+            
     #Running
     while running:
         #Events
@@ -439,9 +514,9 @@ def runSimulation():
     
         #Calculations
         #Ant Movement
-        for inum,i in enumerate(ants):
-            i.run()
-            #Pheromone Reduction
+        threadAnts(runAnts)
+        
+        #Pheromone Reduction
         global frameNum
         if frameNum%fadeRate==0:
             for i in [BPheromones,RPheromones]:
@@ -456,8 +531,7 @@ def runSimulation():
             screen.blit(i, (0,0))
     
         #Drawing Ants
-        for i in ants:
-            i.draw(screen)
+        threadAnts(drawAnts)
 
         #Update Screen
         global updateList
@@ -471,6 +545,7 @@ def run():
     '''
     Sets up the simulation and runs it
     '''
+    random.seed(seed)
     drawMaze()
     runSimulation()
 
