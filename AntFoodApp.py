@@ -122,7 +122,9 @@ HomeVarsPreview={"width":"Simulation Width",
                  "seed":"Seed",
                  "numRectX":"Number of Rectangles X axis",
                  "numRectY":"Number of Rectangles Y axis",
-                 "wallWidth":"Width of Walls"}
+                 "wallWidth":"Width of Walls",
+                 "numants":"Number of Ants",
+                 "seeDist":"Length of Sight"}
 HomeText="Home"
 for var,text in HomeVarsPreview.items():
     VarEntry(Home,var,text,preview=HomeText)

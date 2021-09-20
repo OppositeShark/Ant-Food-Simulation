@@ -33,34 +33,36 @@ wallWidth=2
 NumFoodClusters=math.ceil(numRectX*numRectY/4)
 
 #Ants
+lifespan=width*height/20
 #Angles and Sight
-randomWalk=math.radians(5)
-angs=(90,67,45,22)
-seeAngs={math.radians(i*s):5/i for i in angs for s in (-1,1)}
+randomWalk=math.radians(3)
+angs=(45,90)
+seeAngs={math.radians(i*s):20/i for i in angs for s in (-1,1)}
 seeAngs[0]=2
 seeDist=10
-maxturn=math.radians(45)
+maxturn=math.radians(30)
+angChangeWeight = 0.05
+maxInfluence = math.radians(10)
 #Speed
 maxSpeed=1
 acceleration=0.1
 #Weights and Colors
-foodweight=8000
-wallweight=-3000
-returnFood=8000
-BlueWeight=lambda a:a**1.4
-BlueAvoidWeight=lambda a:-a/1.5
-RedWeight=lambda a:a**1.4
+foodweight=2000
+wallweight=-2000*seeDist/2
+returnFood=2000
+BlueWeight=lambda a:a*5
+BlueAvoidWeight=lambda a:-a
+RedWeight=lambda a:a*5
 AvoidFoodWeight=wallweight
 distWeight=lambda d:0.9**d
 #Number of Ants
-numants=100
-#FPS
-fps=10
+numants=200
 #Threading
 numThreads=4
 #Lasting Pheromones
-LastLength=300
-fadeRate=math.ceil(LastLength/50)
+putAmount=math.ceil(500/numants)
+LastLength=width*3
+fadeRate=math.ceil(LastLength/putAmount)
 #%%Starting
 global BP
 global BPheromones
@@ -124,7 +126,12 @@ updateList=[]
 def updatePixel(x,y):
     rect=pygame.Rect(x,y,1,1)
     updateList.append(rect)
-    
+
+def avgAng(ang1,ang2,ranges):
+    if abs(ang1-ang2)>ranges/2:
+        return (max(ang1,ang2)+min(ang1,ang2)+ranges)/2%ranges
+    else:
+        return (ang1+ang2)/2
 class ant():
     def __init__(self,x,y,ang):
         self.x=x
@@ -134,16 +141,22 @@ class ant():
         self.speed=0
         self.lastFood=(0,0)
         self.placePheromone=True
+        self.life = lifespan
         ants.append(self)
     
+    toShade = 255/math.pi/2
     def dropPheromone(self):
         #Sets image pixel to red or blue
         if self.x>width or self.x<0 or self.y>height or self.y<0:
             return
         if self.food==True:
-            RPheromones[self.x,self.y]=RED+(RPheromones[self.x,self.y][3]+50,)
+            pastVal = RPheromones[self.x,self.y]
+            ang = avgAng(pastVal[2], self.ang*ant.toShade, 255)
+            RPheromones[self.x,self.y]=(255,round(ang), 0, pastVal[3]+putAmount)
         else:
-            BPheromones[self.x,self.y]=BLUE+(BPheromones[self.x,self.y][3]+50,)
+            pastVal = BPheromones[self.x,self.y]
+            ang = avgAng(pastVal[2], self.ang*ant.toShade, 255)
+            BPheromones[self.x,self.y]=(0,round(ang), 255, pastVal[3]+putAmount)
     
     def pickFood(self,x,y):
         self.food=True
@@ -153,11 +166,15 @@ class ant():
         #Creating Angle Choices
         choice={}
         for i in seeAngs.keys():
-            choice[i]=1
+            choice[i]=0
         
         #Sight
         #If the ant with food gets lost, it will stop dropping red pheromones
         seeBlue=False
+        
+        #Turn towards common angle
+        avgAng = 0
+        numSight = 0
         
         #Seeing each angle
         hasFood=self.food
@@ -169,8 +186,6 @@ class ant():
                 #(x,y)
                 x=round(i*cosDirection+self.x)
                 y=round(i*sinDirection+self.y)
-                #screen.fill(BLACK,rect=[x,y,1,1])
-                #ant.updatePixel(x,y)
                 
                 #If the detection is out of bounds
                 if OutOfBounds(x,y): 
@@ -195,7 +210,8 @@ class ant():
                 #Attraction to nest
                 elif hasFood and PixVal==NEST:
                     choice[ang]+=returnFood
-                #If they have food
+                #Pheromone Sensing
+                #Green is directional Value
                 PixVal=BPheromones[x,y]
                 if hasFood:
                     #Blue Pheromones
@@ -203,6 +219,8 @@ class ant():
                         seeBlue=True
                         #Sees path back
                         choice[ang]+=iWeight*BlueWeight(PixVal[3])
+                        avgAng += PixVal[2]
+                        numSight += 1
                     #Avoid Food
                     PixVal=FoodMaze[x,y]
                     if PixVal==FOOD:
@@ -215,32 +233,48 @@ class ant():
                     #Red Pheromones
                     PixVal=RPheromones[x,y]
                     if PixVal[3]>0:
-                        choice[ang]+=iWeight*RedWeight(PixVal[3])    
+                        choice[ang]+=iWeight*RedWeight(PixVal[3])
+                        avgAng += PixVal[2]
+                        numSight += 1
+                
             #Angle Weight
-            if choice[ang]>=0:
+            if abs(choice[ang])>=1:
                 choice[ang]*=weight
             else:
                 choice[ang]/=weight
         
+        #Changing angle to align against path
+        if numSight!=0:
+            avgAng/=ant.toShade
+            avgAng/=numSight
+            avgAng+=math.pi
+            diff = (self.ang-avgAng)*angChangeWeight
+            if abs(diff)>maxInfluence:
+                if diff>0:
+                    diff = maxInfluence
+                else:
+                    diff = -maxInfluence
+            self.ang+=diff
+            
         #Turn off pheromones
         if hasFood:
             if seeBlue:
                 self.placePheromone=True
             else:
                 self.placePheromone=False
-                
-        #Scale choices 
-        rangeVals=(max(choice.values())-min(choice.values()))/100    
+        
+        #Shift and Expand distances between Values
+        minWeight = min(choice.values())
+        if minWeight>0:
+            minWeight=-minWeight
         for i in choice.keys():
-            choice[i]/=rangeVals
-            choice[i]=1.4**choice[i]
-                
+            choice[i]+=minWeight
+            choice[i]=choice[i]**5
+        
         #Weights of each choice
         totalWeight=sum(choice.values())
         if totalWeight==0:
             return seeAngs
-        for i in choice.keys():
-            choice[i]/=totalWeight
         return choice
     
     def move(self):
@@ -272,15 +306,12 @@ class ant():
             #Random Walk
             self.ang+=random.gauss(0,randomWalk)
             #Sensing
-            for ang,weight in sight.items():
-                section+=weight
-                if direction<=section:
-                    if ang>maxturn:
-                        ang=maxturn
-                    elif ang<-maxturn:
-                        ang=-maxturn
-                    self.ang+=ang
-                    break
+            ang = random.choices(list(sight.keys()),weights = list(sight.values()))[0]
+            if ang>maxturn:
+                ang=maxturn
+            elif ang<-maxturn:
+                ang=-maxturn
+            self.ang+=ang
                     
         #Accelerate
         if self.speed<maxSpeed:
@@ -297,6 +328,9 @@ class ant():
         self.move()
         if self.placePheromone:
             self.dropPheromone()
+        self.life-=1
+        if self.life<1:
+            self.restart()
         updatePixel(self.x,self.y)
         
     def restart(self):
@@ -304,6 +338,7 @@ class ant():
         self.x=nestx
         self.y=nesty
         self.ang=random.uniform(0,2*math.pi)
+        self.life = lifespan
     
     def draw(self, screen):
         screen.fill(ANTCOLOR,rect=[self.x,self.y,1,1])
@@ -499,10 +534,9 @@ def runSimulation():
             elif event.type==pygame.MOUSEBUTTONUP:
                 hold=False
             #Mouse Motion
-            elif event.type==4:
-                if hold:
-                    FoodMaze[event.pos[0],event.pos[1]]=FOOD
-                    updatePixel(event.pos[0],event.pos[1])
+            elif hold and event.type==4:
+                FoodMaze[event.pos[0],event.pos[1]]=FOOD
+                updatePixel(event.pos[0],event.pos[1])
             #Key Down
             elif event.type==2:
                 #Down Button
