@@ -33,13 +33,13 @@ wallWidth=2
 NumFoodClusters=math.ceil(numRectX*numRectY/4)
 
 #Ants
-lifespan=width*height/20
+lifespan=width*height/numRectX/numRectY
 #Angles and Sight
 randomWalk=math.radians(3)
 angs=(45,90)
 seeAngs={math.radians(i*s):20/i for i in angs for s in (-1,1)}
 seeAngs[0]=2
-seeDist=10
+seeDist=20
 maxturn=math.radians(30)
 angChangeWeight = 0.05
 maxInfluence = math.radians(10)
@@ -56,7 +56,7 @@ RedWeight=lambda a:a*5
 AvoidFoodWeight=wallweight
 distWeight=lambda d:0.9**d
 #Number of Ants
-numants=200
+numants=100
 #Threading
 numThreads=4
 #Lasting Pheromones
